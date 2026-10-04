@@ -75,7 +75,7 @@ bearing property of the design: the switch is a single attribute flip, the
 stylesheet is injected exactly once per page, and the off state cannot leave a
 half-applied material behind.
 
-Four smaller decisions worth knowing about:
+Five smaller decisions worth knowing about:
 
 - The panel fill is derived, not hard-coded:
   `color-mix(in srgb, var(--dsw-alias-bg-base) <opacity>%, transparent)`. It
@@ -98,6 +98,12 @@ Four smaller decisions worth knowing about:
   writes its tokens as inline custom properties on `<body>`, which is exactly
   what a stylesheet can override; nothing here depends on the host agreeing to
   lower its own specificity.
+- **The two panes have no edge line.** Windows already sets `border-right: none`
+  on the sidebar column and the title row never had a border, so the only lines
+  at those surfaces were hairlines 0.2.0 drew itself; 0.2.1 removed them. In a
+  plain browser tab the host does draw a `.5px` border, and the plugin clears its
+  *colour* rather than dropping the border: keeping the half-pixel box means
+  switching the material off shifts nothing.
 
 ## What the material deliberately does not do
 
@@ -128,7 +134,13 @@ Both of these shipped as bugs in 0.1.0 and are now pinned by assertions in
   leave the panels unpainted rather than broken.
 - **The colour field is an invention, not a wallpaper sample.** A browser cannot
   read the desktop wallpaper, so the tint is a fixed low-chroma field rather than
-  a real sample of what is behind the window.
+  a real sample of what is behind the window. In other words this plugin is a
+  *simulation* of Mica, not Mica: the real thing is composited by DWM from the
+  wallpaper and can only be switched on from the Electron main process with
+  `new BrowserWindow({ backgroundMaterial: "mica" })`, out of reach of a
+  renderer-side plugin. The host knows the way — its welcome window asks for
+  `backgroundMaterial: "acrylic"` on win32, while the main window only sets an
+  opaque `titleBarOverlay` colour.
 
 ## Development
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ui-mica",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Mica material background for the DeepSeek Harness sidebar and title bar, with an on/off switch in Settings -> General.",
   "keywords": [
     "dsh",
