@@ -110,7 +110,7 @@ console.log("cordis.patch.yml");
 // through `configForms`, and the namespace the host half's switch writes into.
 // A rename on either side silently detaches the Settings row from the material.
 const namespace = client.match(/NAMESPACE = "([^"]+)"/)?.[1];
-check(typeof namespace === "string" && namespace.length > 0, "the browser half declares a namespace");
+check(typeof namespace === "string" && namespace.length > 0, "the row id is the namespace the browser half reads");
 check(patch.includes(`- id: ${namespace}`), `patch layer inserts the ${namespace} row`);
 check(patch.includes("name: dsh-ui-mica"), "patch layer row names this package");
 

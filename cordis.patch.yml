@@ -16,7 +16,7 @@
 #       config:
 #         enabled: true
 #         opacity: 62
-#         blur: 30
+#         tint: 100
 #         noise: 0.06
 - insert:
     - id: ui-mica

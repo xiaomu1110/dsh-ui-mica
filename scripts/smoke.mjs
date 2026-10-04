@@ -376,10 +376,10 @@ check(typeof host.apply === "function", "the host half exports apply");
 check(typeof host.Config === "function", "the host half exports Config");
 
 const defaults = host.readSettings(host.Config({}));
-checkEqual(defaults, { enabled: true, opacity: 62, blur: 30, noise: 0.06 }, "the schema defaults are the documented ones");
+checkEqual(defaults, { enabled: true, opacity: 62, tint: 100, noise: 0.06 }, "the schema defaults are the documented ones");
 
-const tuned = host.readSettings(host.Config({ enabled: false, opacity: 80, blur: 12, noise: 0.02 }));
-checkEqual(tuned, { enabled: false, opacity: 80, blur: 12, noise: 0.02 }, "config values are read back verbatim");
+const tuned = host.readSettings(host.Config({ enabled: false, opacity: 80, tint: 40, noise: 0.02 }));
+checkEqual(tuned, { enabled: false, opacity: 80, tint: 40, noise: 0.02 }, "config values are read back verbatim");
 
 let rejected = false;
 try {
@@ -445,15 +445,13 @@ console.log("host half — the stylesheet");
 for (const [surface, needle] of Object.entries({
   "the sidebar column": '[class*="_sidebarCol"]',
   "the Windows title row": '[class*="_frame"]::before',
-  "the opaque content column": '[class*="_centerCol"]',
-  "the app frame": '[class*="_frame"]',
   "the Windows shell": "[data-windows-titlebar]",
   "the dark scheme": "body[data-ds-dark-theme]",
-  "the frosted blur": "backdrop-filter:blur(",
-  "the derived panel fill": "--dsw-specific-sidebar-fill:color-mix(in srgb,",
+  "the derived panel fill": "background-color:color-mix(in srgb,var(--dsw-alias-bg-base)",
   "the host surface token": "var(--dsw-alias-bg-base)",
   "the film grain": "data:image/svg+xml,",
-  "the sidebar's single-layer fix": '[class*="_sidebarCol"] [class*="_root"]',
+  "the viewport-anchored field": "background-attachment:fixed!important",
+  "the single-layer fix for the sidebar": "--dsw-specific-sidebar-fill:transparent",
 })) {
   check(css.includes(needle), `the stylesheet styles ${surface}`);
 }
@@ -462,6 +460,7 @@ for (const [surface, needle] of Object.entries({
 // switching the material off would leave a piece of it behind.
 const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
 const ungated = [];
+const selectors = [];
 let ruleCount = 0;
 for (const chunk of stripped.split("}")) {
   const trimmed = chunk.trim();
@@ -474,11 +473,42 @@ for (const chunk of stripped.split("}")) {
   ruleCount += 1;
   for (const selector of trimmed.slice(0, braceAt).split(",")) {
     const target = selector.trim();
+    selectors.push(target);
     if (!target.startsWith('html[data-dsh-mica="on"]')) ungated.push(target);
   }
 }
-check(ruleCount > 10, `the stylesheet has real rules (${ruleCount})`);
+check(ruleCount > 3, `the stylesheet has real rules (${ruleCount})`);
 checkEqual(ungated, [], "every selector is gated on the root attribute");
+
+// The two regressions that shipped in 0.1.0, pinned here so they cannot come back.
+//
+// 1. `backdrop-filter` on the sidebar column made that column a containing block
+//    for `position: fixed` descendants. The sidebar toggle is the only fixed
+//    element in the shell, so it stopped being anchored to the viewport and moved
+//    down by the title row's height, landing on top of the brand logo. Mica does
+//    not blur what is behind it either, so there is nothing to trade away here.
+for (const trap of ["backdrop-filter", "filter:", "transform:", "contain:", "will-change", "perspective:"]) {
+  check(!css.includes(trap), `the stylesheet avoids the containing-block trap "${trap}"`);
+}
+
+// 2. 0.1.0 also repainted `html`, `body`, `#root` and the whole app frame, which
+//    tinted the conversation area. The material is allowed to reach exactly two
+//    surfaces — the sidebar column and the title row — and nothing else.
+check(!css.includes("_centerCol"), "the content column is never mentioned");
+for (const selector of selectors) {
+  check(
+    !selector.includes("_frame") || selector.includes("::before"),
+    `"${selector}" paints only the title row, never the app frame`,
+  );
+}
+check(
+  !/body\s*\{/.test(stripped) && !/^html\s*\{/m.test(stripped),
+  "the stylesheet never paints html or body themselves",
+);
+check(
+  !css.includes("body{--dsw-specific-sidebar-fill"),
+  "the host fill token is cleared on the sidebar column, not globally",
+);
 
 // The stylesheet is inlined into the document, so it must never be able to look
 // like markup. The grain's angle brackets are percent-encoded for this reason.
@@ -503,10 +533,14 @@ checkEqual(
 
 console.log("host half — tuning");
 
-const soft = host.micaInjections({ ...defaults, opacity: 30, blur: 0, noise: 0 })[0].text;
+const soft = host.micaInjections({ ...defaults, opacity: 30, noise: 0 })[0].text;
 check(soft.includes("color-mix(in srgb,var(--dsw-alias-bg-base) 30%,transparent)"), "the opacity knob reaches the fill");
-check(soft.includes("blur(0px)"), "the blur knob reaches the backdrop filter");
 check(!soft.includes("data:image/svg+xml,"), "a zero noise knob drops the grain layer entirely");
+
+const untinted = host.micaInjections({ ...defaults, tint: 0 })[0].text;
+check(untinted.includes("rgba(138,166,228,0)"), "a zero tint knob drops every wash to zero alpha");
+const doubleTint = host.micaInjections({ ...defaults, tint: 200 })[0].text;
+check(doubleTint.includes("rgba(138,166,228,0.48)"), "the tint knob scales every wash");
 
 const secondTable = [];
 hostSink.listeners[0].handler(secondTable);

@@ -9,15 +9,14 @@ on/off switch in **Settings → General**.
 
 ## What it does
 
-The sidebar column and the Windows title row are the two surfaces the harness
-already paints from a single token, `--dsw-specific-sidebar-fill`. This plugin
-replaces that token with a translucent panel fill and puts a desktop-like
-backdrop — a base colour plus four colour blooms and a fine grain — behind the
-whole frame. The result is the layered, slightly frosted look Windows calls
-Mica: the panels show the colour behind them, while the text stays crisp.
+The sidebar column and the Windows title row are two slices of one surface, and
+the plugin paints them as such: a translucent panel fill plus a wide, low-chroma
+colour field and a fine grain, anchored to the viewport so the two slices line up
+across the seam between them. The result is the layered, barely-there tint
+Windows calls Mica.
 
-The middle column, where the conversation is, is deliberately left **opaque**.
-A translucent panel is a decoration; a translucent wall of text is a bug.
+Two surfaces, and only two. The content column, the app frame, `html`, `body` and
+`#root` are all left exactly as the host drew them.
 
 ## Install
 
@@ -43,12 +42,13 @@ Three cosmetic knobs are not in the UI. Set them in the profile's
       config:
         enabled: true   # same switch as the Settings row
         opacity: 62     # 20–92: percent of the host surface colour kept in the panel fill
-        blur: 30        # 0–120: backdrop blur on the two Mica surfaces, in px
+        tint: 100       # 0–200: strength of the colour washes, in percent
         noise: 0.06     # 0–0.3: opacity of the film grain
 ```
 
-Raise `opacity` if text over the panels ever feels low-contrast; lower it if the
-backdrop is not showing through enough.
+Raise `opacity` if text over the panels ever feels low-contrast; lower it to let
+more of the field behind the panel show through. `tint: 0` leaves a plain
+translucent panel with no colour of its own.
 
 ## How it works
 
@@ -75,16 +75,45 @@ bearing property of the design: the switch is a single attribute flip, the
 stylesheet is injected exactly once per page, and the off state cannot leave a
 half-applied material behind.
 
-Two smaller decisions worth knowing about:
+Four smaller decisions worth knowing about:
 
 - The panel fill is derived, not hard-coded:
   `color-mix(in srgb, var(--dsw-alias-bg-base) <opacity>%, transparent)`. It
   therefore follows the active theme — light, dark, or any third-party theme —
   without a per-scheme table to keep in sync.
+- The sidebar's inner root paints `--dsw-specific-sidebar-fill` a second time, on
+  top of the column, and that fill is opaque. The plugin clears the token on the
+  column so the sidebar collapses back to one painted layer; the title row has no
+  such child, and without this the two panes would disagree. Clearing the token
+  rather than neutralising the elements that read it is deliberate — the inner
+  root is a grandchild of the column, so no child combinator reaches it, and
+  `[class*="_root"]` also matches unrelated elements all over the sidebar.
+  Inheritance needs no selector and cannot be wrong about depth.
+- The colour field is `background-attachment: fixed`. The title row and the
+  sidebar column are 36px and ~700px tall, so a percentage-sized gradient
+  resolves to a different shape in each and the two panes visibly disagree at the
+  seam. Anchoring both boxes to one viewport-sized field removes the seam and
+  keeps a single grain phase across it.
 - The material wins against the theme presenter by `!important`. The presenter
   writes its tokens as inline custom properties on `<body>`, which is exactly
   what a stylesheet can override; nothing here depends on the host agreeing to
   lower its own specificity.
+
+## What the material deliberately does not do
+
+Both of these shipped as bugs in 0.1.0 and are now pinned by assertions in
+`scripts/smoke.mjs`.
+
+- **No `backdrop-filter`, `filter`, `transform`, `contain`, `will-change` or
+  `perspective` anywhere.** Each of those makes an element a containing block for
+  `position: fixed` descendants. The sidebar toggle is the only fixed element in
+  the shell, so putting `backdrop-filter` on the sidebar column dragged it out of
+  the title row and down onto the brand logo. Mica does not blur what is behind
+  the pane either, so nothing is lost by leaving these out.
+- **No rule repaints `html`, `body`, `#root`, the app frame or the content
+  column.** 0.1.0 made `body` transparent and drew a full-viewport backdrop,
+  which tinted the conversation area. A translucent panel is a decoration; a
+  translucent wall of text is a bug.
 
 ## Known limitations
 
@@ -97,6 +126,9 @@ Two smaller decisions worth knowing about:
 - **The material assumes the host keeps its `--dsw-*` tokens.** It layers on top
   of the theme rather than replacing it; a host that renames those tokens would
   leave the panels unpainted rather than broken.
+- **The colour field is an invention, not a wallpaper sample.** A browser cannot
+  read the desktop wallpaper, so the tint is a fixed low-chroma field rather than
+  a real sample of what is behind the window.
 
 ## Development
 
@@ -104,22 +136,22 @@ There is no build step. Both halves ship as hand-written JavaScript, so the
 scripts below stand in for the compile-and-check stage a TSX plugin would have.
 
 ```sh
-node scripts/check.mjs     # static bundle invariants (the "build" that isn't)
-node scripts/smoke.mjs     # runs both halves against a stubbed host
-node scripts/preview.mjs   # writes preview/*.html — the material, without a restart
+node scripts/check.mjs   # static bundle invariants (the "build" that isn't)
+node scripts/smoke.mjs   # runs both halves against a stubbed host
 ```
 
-`preview.mjs` generates the real stylesheet and renders it against a
-reproduction of the host's frame markup, which is the only practical way to
-iterate on a UI plugin without installing it and restarting the harness. Open
-the generated pages in a browser, or screenshot them headlessly:
+`smoke.mjs` asserts behaviour and the CSS invariants above. Neither script can
+tell you what the material *looks* like, and that limit is worth stating plainly:
+0.1.0 passed both suites while looking wrong on screen, because the suites model
+the host rather than being the host. Anything about the rendered result — pane
+colours, the seam between the two surfaces, whether a control has moved — has to
+be checked against a real harness instance, by reading computed styles out of the
+running page. In particular:
 
-```sh
-msedge --headless=new --disable-gpu --window-size=1280,760 \
-  --screenshot="preview/shot.png" "preview/desktop-light.html"
-```
-
-Press <kbd>m</kbd> in a preview page to flip the material on and off.
+- the title row and the sidebar must measure the same colour where they meet;
+- the sidebar toggle must sit at the same coordinates with the material on as
+  with it off;
+- an on/off diff of every element in the document must name only the sidebar.
 
 ## License
 
