@@ -1,0 +1,7 @@
+# Keep the published bytes identical to the working tree on every platform.
+# This package ships plain JS that the harness loads directly, so a checkout that
+# rewrites line endings would change what runs.
+* text=auto eol=lf
+
+# Keep the screenshots byte-for-byte.
+*.png binary

@@ -1,0 +1,23 @@
+# dsh-ui-mica layer.
+#
+# Adds one plugin row. The row id doubles as the settings namespace both halves
+# work through -- the browser half reads it with `configForms`, and the saved
+# switch value is written back into it -- so it must stay `ui-mica`. The host
+# half injects the whole Mica material plus a pre-mount switch stamp into the
+# served index; the browser half keeps that stamp in step with the switch and
+# adds one row to Settings -> General.
+#
+# A profile can set the base layer here. Saved values still win over it, and a
+# field left out falls back to the schema default:
+#
+# - insert:
+#     - id: ui-mica
+#       name: dsh-ui-mica
+#       config:
+#         enabled: true
+#         opacity: 62
+#         blur: 30
+#         noise: 0.06
+- insert:
+    - id: ui-mica
+      name: dsh-ui-mica
