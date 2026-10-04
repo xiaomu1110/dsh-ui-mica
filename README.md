@@ -28,6 +28,9 @@ devtools.
 Two surfaces, and only two. The content column, the app frame, `html`, `body` and
 `#root` are all left exactly as the host drew them.
 
+It also fixes the sidebar's collapse animation, which the host asks for and never
+gets — see [The sidebar collapse animation](#the-sidebar-collapse-animation).
+
 ## Install
 
 ```sh
@@ -129,6 +132,46 @@ Six smaller decisions worth knowing about:
   *colour* rather than dropping the border: keeping the half-pixel box means
   switching the material off shifts nothing.
 
+## The sidebar collapse animation
+
+The sidebar snapping shut in one frame is a bug in the host, and this plugin is
+where it gets fixed.
+
+The host means to glide: its stylesheet carries
+`.BynINW_frame[data-animating]{transition:grid-template-columns …}`, and it sets
+`data-animating` from a layout effect that runs *after* React has committed the
+new column width. A layout read in between forces the style recalculation, so the
+declaration lands one recalculation too late and the transition never runs.
+Measured against the real thing: the column crossed its whole range in **8 ms**,
+with `transitionrun` never firing at all.
+
+No stylesheet can arm that from the far side of the commit — every plausible
+selector (`[data-animating]`, `[data-sidebar-collapsed]`) flips in the same
+commit as the width. So the browser half arms it from *before* the commit: a
+capture-phase `click` listener on `document` runs ahead of the handler React
+attaches at the root, and marks the frame with `data-dsh-mica-collapse`. By the
+time the width changes, the transition is already live. The mark expires 700 ms
+later, well after the 460 ms transition and after the host's own 600 ms settle
+timer.
+
+Two details are load-bearing:
+
+- **It is scoped to the toggle, not to the grid.** A blanket transition on
+  `grid-template-columns` would also animate the right-hand panel's track during
+  an ordinary window resize, which reads as lag. With the right panel closed the
+  plugin also arms the transition from `[data-rightbar-collapsed]`, which is the
+  state the host itself has already committed to — and in that state no track
+  depends on the viewport, so resizing still changes nothing.
+- **The transition is repeated as `none` for `[data-dragging]` and under
+  `prefers-reduced-motion`.** The first because the drag handle has to keep up
+  with the pointer; the second at the *same specificity* as the rule it defeats,
+  since a plain `[data-animating]{transition:none}` would lose to it.
+
+Verified on the real shell: the column now walks 280 → 279 → 263 → 234 → 157 →
+109 → 60 → 19 → 1 → 0 over 460 ms and back, `transitionrun` fires in both
+directions, and with the material switched off the frame is back to the host's
+untouched `transition-property: all` with no transition events at all.
+
 ## What the material deliberately does not do
 
 Both of these shipped as bugs in 0.1.0 and are now pinned by assertions in
@@ -173,6 +216,17 @@ Both of these shipped as bugs in 0.1.0 and are now pinned by assertions in
   one-kilobyte thumbnail would be rude — only as an optional peer, resolved at
   runtime. The harness ships one, so this is rarely a concern; without it the
   material falls back silently.
+
+- **The collapse glide depends on a class name in the host.** Arming it reads
+  `[class*="_toggle"]` and `[class*="_frame"]`, the same kind of dependency the
+  material already has on `[class*="_sidebarCol"]`. If a future host renames
+  them the glide stops being armed and the sidebar returns to snapping — nothing
+  breaks, and nothing else is affected.
+- **A collapse route that is neither the toggle nor the right panel closed still
+  snaps.** Those two states are the only ones that are already true before the
+  width changes, which is the one thing a transition needs. In practice the
+  toggle is the only control that moves the sidebar; a keyboard shortcut pressed
+  while the right panel is open falls back to the host's own behaviour.
 
 ## Development
 

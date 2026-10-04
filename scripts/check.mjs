@@ -224,6 +224,89 @@ check(
   "sharp is not a hard dependency, so installing the plugin never builds a native module",
 );
 
+console.log("collapse glide");
+
+// The two halves are separate module systems — the browser half is a wrapped CJS
+// factory and cannot import the host half — so the four names they must share are
+// literal copies. Copies drift; these checks are what stop them.
+for (const [name, pattern] of [
+  ["collapse attribute", /COLLAPSE_ATTRIBUTE = "([^"]+)"/],
+  ["toggle selector", /TOGGLE_SELECTOR = '([^']+)'/],
+  ["frame selector", /FRAME_SELECTOR = '([^']+)'/],
+  ["arm duration", /COLLAPSE_ARM_DURATION = (\d+)/],
+]) {
+  const inHost = host.match(pattern)?.[1];
+  const inClient = client.match(pattern)?.[1];
+  check(
+    typeof inHost === "string" && inHost === inClient,
+    `both halves agree on the ${name} (${inHost ?? "missing in lib/index.js"})`,
+  );
+}
+
+const glideCss = (await import(new URL("../lib/index.js", import.meta.url).href))
+  .materialCss(
+    { enabled: true, opacity: 62, tint: 100, noise: 0.06, wallpaper: false, wallpaperPath: "" },
+    null,
+  );
+const glideRule = glideCss
+  .split("\n")
+  .find((line) => line.includes("transition:grid-template-columns"));
+
+check(typeof glideRule === "string", "the stylesheet declares the grid-track transition");
+check(
+  glideRule !== undefined && glideRule.includes("[data-rightbar-collapsed]"),
+  "the glide is armed by a state that is already true before the track changes",
+);
+// The obvious spelling is to key this on the host's `data-animating`, and it does
+// nothing: that attribute lands one recalc after the commit that changed the
+// width, so the transition it declares is never live in time. This check exists
+// so nobody "simplifies" the rule back into that bug.
+check(
+  glideRule !== undefined && !glideRule.includes("data-animating"),
+  "the glide is not keyed on data-animating, which arrives too late to arm it",
+);
+
+const glideMs = Number(glideRule?.match(/grid-template-columns (\d+)ms/)?.[1]);
+check(
+  Number.isFinite(glideMs) && glideMs > 0 && glideMs < 600,
+  `the glide finishes inside the host's 600ms settle timer (${glideMs}ms)`,
+);
+check(
+  host.includes(`const COLLAPSE_DURATION = ${glideMs};`),
+  "the constant the host half declares is the one the stylesheet uses",
+);
+check(
+  /\[class\*="_frame"\]\[data-dragging\]\{transition:none\}/.test(glideCss),
+  "dragging the handle stays untransitioned, so the edge keeps up with the pointer",
+);
+// Same specificity as the rule it has to defeat, and later in the sheet.
+check(
+  /@media \(prefers-reduced-motion:reduce\)\{html\[data-dsh-mica="on"\] \[class\*="_frame"\]:is\(/
+    .test(glideCss),
+  "reduced motion turns the glide off, at matching specificity",
+);
+
+check(
+  client.includes('document.addEventListener("click", arm, true)'),
+  "the browser half listens in the capture phase, early enough to beat React's commit",
+);
+check(
+  !client.includes('addEventListener("pointerdown"'),
+  "the arming event also covers Enter and Space, not only the mouse",
+);
+check(
+  client.includes('document.removeEventListener("click", arm, true)'),
+  "the capture listener is removed again on teardown",
+);
+check(
+  client.includes("armCollapse(ctx)"),
+  "the browser half installs the arming listener",
+);
+check(
+  /frame\.setAttribute\(COLLAPSE_ATTRIBUTE/.test(client),
+  "the listener marks the frame, not the document, so teardown can find it",
+);
+
 console.log(
   failures === 0
     ? `\ncheck: ${failures} failure(s) — all invariants hold`

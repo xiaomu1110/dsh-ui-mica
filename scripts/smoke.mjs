@@ -494,9 +494,14 @@ for (const [surface, needle] of Object.entries({
 
 // The load-bearing property of the whole design: if any rule escaped the gate,
 // switching the material off would leave a piece of it behind.
-const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+const stripped = css
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  // Unwrap at-rules so the rule inside a media query is judged by the same
+  // gate as everything else, rather than the wrapper being read as a selector.
+  .replace(/@media[^{]*\{/g, "");
 const ungated = [];
 const selectors = [];
+const rules = [];
 let ruleCount = 0;
 for (const chunk of stripped.split("}")) {
   const trimmed = chunk.trim();
@@ -507,9 +512,11 @@ for (const chunk of stripped.split("}")) {
     continue;
   }
   ruleCount += 1;
-  for (const selector of trimmed.slice(0, braceAt).split(",")) {
+  const body = trimmed.slice(braceAt + 1);
+  for (const selector of splitTopLevel(trimmed.slice(0, braceAt))) {
     const target = selector.trim();
     selectors.push(target);
+    rules.push({ selector: target, body });
     if (!target.startsWith('html[data-dsh-mica="on"]')) ungated.push(target);
   }
 }
@@ -531,10 +538,14 @@ for (const trap of ["backdrop-filter", "filter:", "transform:", "contain:", "wil
 //    tinted the conversation area. The material is allowed to reach exactly two
 //    surfaces — the sidebar column and the title row — and nothing else.
 check(!css.includes("_centerCol"), "the content column is never mentioned");
-for (const selector of selectors) {
+// The frame may be mentioned without `::before` for exactly one reason — to say
+// how a track change is drawn, which is motion, not paint. Anything that reaches
+// the frame and declares a real property is the 0.1.0 leak coming back.
+for (const { selector, body } of rules) {
+  if (!selector.includes("_frame") || selector.includes("::before")) continue;
   check(
-    !selector.includes("_frame") || selector.includes("::before"),
-    `"${selector}" paints only the title row, never the app frame`,
+    /^transition:[^;]*$/.test(body.trim()),
+    `"${selector}" declares motion only (${body.trim()}), never paint`,
   );
 }
 check(
@@ -554,15 +565,17 @@ check(!css.includes("</style"), "the stylesheet cannot close its own tag");
 console.log("host half — the wallpaper");
 
 /**
- * Split a comma-separated CSS value list at top level only.
+ * Split a comma-separated CSS list at top level only.
  *
- * Layer lists cannot be split on every comma: `color-mix(in srgb,...)`,
- * `rgba(...)` and `url("...")` all carry commas of their own.
+ * Neither layer lists nor selector lists can be split on every comma.
+ * `color-mix(in srgb,...)`, `rgba(...)` and `url("...")` carry commas of their
+ * own, and so does `:is(a,b)` — splitting the latter naively invents a selector
+ * that starts with a bare `[`, which then reads as an escape from the gate.
  *
- * @param value A CSS value list.
+ * @param value A CSS value list or selector list.
  * @returns Its top-level parts.
  */
-function splitLayers(value) {
+function splitTopLevel(value) {
   const parts = [];
   let depth = 0;
   let start = 0;
@@ -585,7 +598,7 @@ const without = host.materialCss(defaults, null);
 
 check(withWallpaper.includes(SAMPLE), "a sampled wallpaper reaches the stylesheet");
 checkEqual(
-  splitLayers(withWallpaper.match(/background-size:([^!]+)!important/)[1]).at(-1),
+  splitTopLevel(withWallpaper.match(/background-size:([^!]+)!important/)[1]).at(-1),
   "cover",
   "the wallpaper is sized to the viewport",
 );
@@ -607,8 +620,8 @@ check(without.includes("painted fallback field"), "and the stylesheet says which
 // the browser drop the whole declaration — silently, and only for the pane that
 // has the mismatched count.
 for (const [name, text] of [["wallpaper", withWallpaper], ["fallback", without]]) {
-  const images = splitLayers(text.match(/background-image:([^!]+)!important/)[1]);
-  const sizes = splitLayers(text.match(/background-size:([^!]+)!important/)[1]);
+  const images = splitTopLevel(text.match(/background-image:([^!]+)!important/)[1]);
+  const sizes = splitTopLevel(text.match(/background-size:([^!]+)!important/)[1]);
   check(
     images.length > 1 && images.length === sizes.length,
     `the ${name} stack carries one size per layer (${images.length})`,
@@ -785,3 +798,4 @@ console.log(
     : `\nsmoke: ${failures} failure(s)`,
 );
 process.exitCode = failures === 0 ? 0 : 1;
+
