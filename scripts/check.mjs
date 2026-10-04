@@ -203,6 +203,27 @@ check(
   "the host half never touches the DOM",
 );
 
+// `sharp` is how the wallpaper is sampled, but it is a native module the host
+// already ships. Importing it statically would make the whole plugin fail to
+// load in a profile that lacks it, which is exactly the case the fallback field
+// exists for — so it has to stay optional and be resolved at runtime.
+check(
+  !/^\s*import\s[^;]*from\s+["']sharp["']/m.test(host),
+  "the host half never imports sharp statically",
+);
+check(
+  host.includes('resolve("sharp"'),
+  "the host half resolves sharp at runtime, so a profile without it still loads",
+);
+check(
+  pkg.peerDependenciesMeta?.sharp?.optional === true,
+  "sharp is declared as an optional peer dependency",
+);
+check(
+  !Object.keys(pkg.dependencies ?? {}).includes("sharp"),
+  "sharp is not a hard dependency, so installing the plugin never builds a native module",
+);
+
 console.log(
   failures === 0
     ? `\ncheck: ${failures} failure(s) — all invariants hold`

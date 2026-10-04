@@ -376,10 +376,25 @@ check(typeof host.apply === "function", "the host half exports apply");
 check(typeof host.Config === "function", "the host half exports Config");
 
 const defaults = host.readSettings(host.Config({}));
-checkEqual(defaults, { enabled: true, opacity: 62, tint: 100, noise: 0.06 }, "the schema defaults are the documented ones");
+checkEqual(
+  defaults,
+  { enabled: true, opacity: 62, tint: 100, noise: 0.06, wallpaper: true, wallpaperPath: "" },
+  "the schema defaults are the documented ones",
+);
 
-const tuned = host.readSettings(host.Config({ enabled: false, opacity: 80, tint: 40, noise: 0.02 }));
-checkEqual(tuned, { enabled: false, opacity: 80, tint: 40, noise: 0.02 }, "config values are read back verbatim");
+const tuned = host.readSettings(host.Config({
+  enabled: false,
+  opacity: 80,
+  tint: 40,
+  noise: 0.02,
+  wallpaper: false,
+  wallpaperPath: "C:/pictures/wall.jpg",
+}));
+checkEqual(
+  tuned,
+  { enabled: false, opacity: 80, tint: 40, noise: 0.02, wallpaper: false, wallpaperPath: "C:/pictures/wall.jpg" },
+  "config values are read back verbatim",
+);
 
 let rejected = false;
 try {
@@ -391,29 +406,49 @@ check(rejected, "an out-of-range value is rejected by the schema");
 
 console.log("host half — installing it");
 
-const hostSink = { configured: [], effects: [], injected: [], listeners: [] };
-host.apply({
-  fiber: {},
-  inject: (deps, callback) => {
-    hostSink.injected.push(deps);
-    callback({
-      effect: (run, label) => {
-        // Cordis runs an effect body immediately and keeps its return value as
-        // the disposer; a stub that only recorded it would never observe the
-        // configuration call the body is there to make.
-        hostSink.effects.push(label);
-        const dispose = run();
-        return () => {
-          if (typeof dispose === "function") dispose();
-        };
-      },
-      settings: {
-        configure: (options, fiber) => hostSink.configured.push({ options, fiber }),
-      },
-    });
-  },
-  on: (event, handler, options) => hostSink.listeners.push({ event, handler, options }),
-}, host.Config({}));
+/**
+ * Build a stub host context that records everything `apply` does with it.
+ *
+ * @returns `{ ctx, sink }`.
+ */
+function stubHost() {
+  const sink = { configured: [], effects: [], injected: [], listeners: [] };
+  const ctx = {
+    fiber: {},
+    inject: (deps, callback) => {
+      sink.injected.push(deps);
+      callback({
+        effect: (run, label) => {
+          // Cordis runs an effect body immediately and keeps its return value as
+          // the disposer; a stub that only recorded it would never observe the
+          // configuration call the body is there to make.
+          sink.effects.push(label);
+          const dispose = run();
+          return () => {
+            if (typeof dispose === "function") dispose();
+          };
+        },
+        settings: {
+          configure: (options, fiber) => sink.configured.push({ options, fiber }),
+        },
+      });
+    },
+    on: (event, handler, options) => sink.listeners.push({ event, handler, options }),
+  };
+  return { ctx, sink };
+}
+
+// The wallpaper source is injected rather than discovered, so this test never
+// reads the machine it runs on: a test that depended on the developer's own
+// desktop picture would be a test that fails on somebody else's laptop.
+const samples = [];
+const stubWallpaper = {
+  current: () => null,
+  refresh: (configured) => samples.push(configured),
+};
+
+const { ctx: hostCtx, sink: hostSink } = stubHost();
+host.apply(hostCtx, host.Config({}), { wallpaper: stubWallpaper });
 
 checkEqual(hostSink.injected, [["settings"]], "it waits for the settings service");
 checkEqual(hostSink.configured.map((entry) => entry.options), [{ auto: false }], "it suppresses the schema-generated settings page");
@@ -439,6 +474,7 @@ checkEqual(firstTable[1]?.placement, "body", "the script runs in the body, befor
 
 const css = firstTable[0].text;
 const script = firstTable[1].text;
+checkEqual(samples, [""], "an index render asks for a fresh wallpaper sample");
 
 console.log("host half — the stylesheet");
 
@@ -514,6 +550,203 @@ check(
 // like markup. The grain's angle brackets are percent-encoded for this reason.
 check(!css.includes("<") && !css.includes(">"), "the stylesheet contains no markup characters");
 check(!css.includes("</style"), "the stylesheet cannot close its own tag");
+
+console.log("host half — the wallpaper");
+
+/**
+ * Split a comma-separated CSS value list at top level only.
+ *
+ * Layer lists cannot be split on every comma: `color-mix(in srgb,...)`,
+ * `rgba(...)` and `url("...")` all carry commas of their own.
+ *
+ * @param value A CSS value list.
+ * @returns Its top-level parts.
+ */
+function splitLayers(value) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "(") depth += 1;
+    else if (character === ")") depth -= 1;
+    else if (character === "," && depth === 0) {
+      parts.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts;
+}
+
+const SAMPLE = 'url("data:image/webp;base64,AAAA")';
+const withWallpaper = host.materialCss(defaults, SAMPLE);
+const without = host.materialCss(defaults, null);
+
+check(withWallpaper.includes(SAMPLE), "a sampled wallpaper reaches the stylesheet");
+checkEqual(
+  splitLayers(withWallpaper.match(/background-size:([^!]+)!important/)[1]).at(-1),
+  "cover",
+  "the wallpaper is sized to the viewport",
+);
+check(!withWallpaper.includes("radial-gradient"), "the painted field is dropped once there is a wallpaper");
+check(
+  withWallpaper.indexOf(SAMPLE) > withWallpaper.indexOf("linear-gradient(color-mix"),
+  "the surface colour is laid over the wallpaper, which is the order DWM composites in",
+);
+check(
+  withWallpaper.includes("desktop wallpaper, sampled and blurred"),
+  "the stylesheet records that its colour came from the wallpaper",
+);
+
+check(!without.includes("data:image/webp"), "with no wallpaper the stylesheet carries no bitmap");
+check(without.includes("radial-gradient"), "with no wallpaper the painted field is back");
+check(without.includes("painted fallback field"), "and the stylesheet says which source it used");
+
+// Every layer needs its own size, and a list shorter than the layer list makes
+// the browser drop the whole declaration — silently, and only for the pane that
+// has the mismatched count.
+for (const [name, text] of [["wallpaper", withWallpaper], ["fallback", without]]) {
+  const images = splitLayers(text.match(/background-image:([^!]+)!important/)[1]);
+  const sizes = splitLayers(text.match(/background-size:([^!]+)!important/)[1]);
+  check(
+    images.length > 1 && images.length === sizes.length,
+    `the ${name} stack carries one size per layer (${images.length})`,
+  );
+}
+
+// The switch has to gate the sampler, not merely the stylesheet: a user who
+// turns the wallpaper off is asking for their desktop picture not to be read.
+const quiet = [];
+const { ctx: offCtx, sink: offSink } = stubHost();
+host.apply(offCtx, host.Config({ wallpaper: false, wallpaperPath: "C:/elsewhere.jpg" }), {
+  wallpaper: { current: () => SAMPLE, refresh: (configured) => quiet.push(configured) },
+});
+const offTable = [];
+offSink.listeners[0].handler(offTable);
+checkEqual(quiet, [], "switching the wallpaper off stops the sampler being asked at all");
+check(!offTable[0].text.includes("data:image/webp"), "and no wallpaper reaches the stylesheet");
+
+console.log("host half — finding a wallpaper");
+
+const appData = join("C:", "Users", "somebody", "AppData", "Roaming");
+checkEqual(
+  host.wallpaperCandidates({ platform: "win32", env: { APPDATA: appData } }),
+  [join(appData, "Microsoft", "Windows", "Themes", "TranscodedWallpaper")],
+  "on Windows the candidate is the file the shell flattens the wallpaper into",
+);
+checkEqual(
+  host.wallpaperCandidates({ platform: "linux", env: { APPDATA: appData } }),
+  [],
+  "on a platform whose wallpaper this plugin cannot read there is no candidate",
+);
+checkEqual(
+  host.wallpaperCandidates({ configured: "C:/mine.png", platform: "linux", env: {} }),
+  ["C:/mine.png"],
+  "an explicit wallpaper path is all it takes to sample one anyway",
+);
+
+const ancestors = host.ancestorDirectories(import.meta.url);
+check(ancestors[0] === here, "sharp resolution starts at the plugin's own directory");
+check(ancestors.at(-1) === dirname(ancestors.at(-1)), "…and walks up to the filesystem root");
+
+// A profile that installs this plugin from a local path links it rather than
+// copying it, and Node resolves that link — so this module's real path ends up
+// outside the profile, and the walk above can never reach the host's `sharp`.
+// The profile the host exports is the anchor that holds for both layouts.
+const roots = host.sharpSearchRoots({
+  fromFile: import.meta.url,
+  env: { DSH_PROFILE_DIR: "C:/profile" },
+  cwd: "C:/cwd",
+});
+checkEqual(roots[0], "C:/profile", "sharp is looked for in the profile the host exported, ahead of anywhere else");
+checkEqual(roots[1], "C:/cwd", "then in the directory the process was started from");
+check(roots.includes(here), "and along this module's own ancestors as the last resort");
+checkEqual(
+  host.sharpSearchRoots({ fromFile: import.meta.url, env: {}, cwd: here }).filter((each) => each === here).length,
+  1,
+  "an anchor that is also an ancestor is searched once, not twice",
+);
+
+console.log("host half — sampling it");
+
+/** Let the sampler's promise chain run to completion. */
+const settle = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+// Any file that exists will do: this test is about when the sampler is asked,
+// not about what it makes of a picture.
+const fixture = join(root, "README.md");
+const sampled = [];
+const source = host.createWallpaperSource({
+  platform: "linux",
+  env: {},
+  load: async () => ({ pretend: "sharp" }),
+  sampler: async (sharp, file) => {
+    sampled.push(file);
+    return SAMPLE;
+  },
+});
+
+source.refresh(fixture);
+checkEqual(source.current(), null, "the render that starts a sample gets the fallback, not half a picture");
+await settle();
+checkEqual(source.current(), SAMPLE, "the sample is there for the render after it");
+checkEqual(sampled, [fixture], "the sampler is handed the file that was found");
+
+source.refresh(fixture);
+await settle();
+checkEqual(sampled.length, 1, "an unchanged wallpaper is never re-sampled");
+source.refresh("");
+checkEqual(source.current(), null, "a wallpaper that goes away is forgotten");
+
+const absent = host.createWallpaperSource({
+  platform: "linux",
+  env: {},
+  load: async () => ({ pretend: "sharp" }),
+  sampler: async () => SAMPLE,
+});
+absent.refresh(join(root, "no-such-wallpaper.jpg"));
+checkEqual(absent.current(), null, "a wallpaper file that is not there is never sampled");
+
+const sharpLess = host.createWallpaperSource({
+  platform: "linux",
+  env: {},
+  load: async () => null,
+  sampler: async () => SAMPLE,
+});
+sharpLess.refresh(fixture);
+await settle();
+checkEqual(sharpLess.current(), null, "a profile without sharp falls back instead of failing");
+
+const broken = host.createWallpaperSource({
+  platform: "linux",
+  env: {},
+  load: async () => ({ pretend: "sharp" }),
+  sampler: async () => { throw new Error("truncated jpeg"); },
+});
+broken.refresh(fixture);
+await settle();
+checkEqual(broken.current(), null, "a wallpaper that cannot be decoded falls back too");
+
+// The regression that a linked install exposed: the anchors have to reach the
+// loader, or resolution silently searches a tree that holds no `node_modules`.
+const anchors = [];
+const anchored = host.createWallpaperSource({
+  platform: "linux",
+  env: { DSH_PROFILE_DIR: "C:/profile" },
+  cwd: "C:/cwd",
+  load: async (options) => {
+    anchors.push(options);
+    return null;
+  },
+  sampler: async () => SAMPLE,
+});
+anchored.refresh(fixture);
+await settle();
+checkEqual(anchors.length, 1, "sharp is loaded once per sample");
+checkEqual(anchors[0].env.DSH_PROFILE_DIR, "C:/profile", "the loader is handed the profile, not just this module's path");
+checkEqual(anchors[0].cwd, "C:/cwd", "the loader is handed the process directory too");
+check(String(anchors[0].fromFile).startsWith("file:"), "the loader is handed this module's own location as the anchor of last resort");
 
 console.log("host half — the pre-mount stamp");
 

@@ -10,10 +10,20 @@ on/off switch in **Settings → General**.
 ## What it does
 
 The sidebar column and the Windows title row are two slices of one surface, and
-the plugin paints them as such: a translucent panel fill plus a wide, low-chroma
-colour field and a fine grain, anchored to the viewport so the two slices line up
-across the seam between them. The result is the layered, barely-there tint
-Windows calls Mica.
+the plugin paints them as such, stacked the way DWM stacks Mica: **the bottom
+layer is a heavily blurred downsample of the current desktop wallpaper** — the
+host half reads the wallpaper once in Node, scales it to 192×108 with `sharp`,
+blurs it, and inlines the roughly 1.4 kB data URI into the stylesheet — with the
+host's own surface colour laid over it, then a sheen and a fine grain. The
+surface colour is derived from `--dsw-alias-bg-base`, so one wallpaper reads as a
+pale tint in the light theme and a dark one in the dark theme without either
+being written down anywhere.
+
+When no wallpaper can be read — not Windows, no `sharp` in the profile, no such
+file, or a file that will not decode — it falls back to a colour field painted in
+place. The panels still work; only the colour stops being sampled. The stylesheet
+opens with a comment saying which of the two you got, so it is one glance in
+devtools.
 
 Two surfaces, and only two. The content column, the app frame, `html`, `body` and
 `#root` are all left exactly as the host drew them.
@@ -32,7 +42,7 @@ startup, so the plugin is only picked up on the next launch.
 **Settings → General → Mica background** turns the material on and off. The
 switch takes effect immediately: no reload, and no flicker in either direction.
 
-Three cosmetic knobs are not in the UI. Set them in the profile's
+A few cosmetic knobs are not in the UI. Set them in the profile's
 `cordis.patch.yml` and reload the page:
 
 ```yaml
@@ -40,21 +50,25 @@ Three cosmetic knobs are not in the UI. Set them in the profile's
     - id: ui-mica
       name: dsh-ui-mica
       config:
-        enabled: true   # same switch as the Settings row
-        opacity: 62     # 20–92: percent of the host surface colour kept in the panel fill
-        tint: 100       # 0–200: strength of the colour washes, in percent
-        noise: 0.06     # 0–0.3: opacity of the film grain
+        enabled: true       # same switch as the Settings row
+        opacity: 62         # 20–92: percent of the host surface colour kept in the panel
+        wallpaper: true     # take the colour from the desktop wallpaper
+        wallpaperPath: ""   # override where the wallpaper is read from; empty means detect
+        tint: 100           # 0–200: strength of the fallback field, in percent
+        noise: 0.06         # 0–0.3: opacity of the film grain
 ```
 
-Raise `opacity` if text over the panels ever feels low-contrast; lower it to let
-more of the field behind the panel show through. `tint: 0` leaves a plain
-translucent panel with no colour of its own.
+`opacity` is how much of the panel is the host's surface colour, so 62 leaves
+roughly 38% of the wallpaper showing through. Raise it if text over the panels
+ever feels low-contrast; lower it to make more of the wallpaper visible. `tint`
+only affects the fallback path, and `wallpaperPath` points at another image
+instead — for macOS, for Linux, or just to try a different wallpaper.
 
 ## How it works
 
 The plugin has two halves, and only one of them owns the CSS.
 
-**`lib/index.js` — the host half.** It declares the four `volatile()` config
+**`lib/index.js` — the host half.** It declares the six `volatile()` config
 fields, suppresses the schema-generated settings page (the browser half draws
 its own row), and hooks `webserver/index-inject` to push two entries into every
 served `index.html`:
@@ -75,8 +89,18 @@ bearing property of the design: the switch is a single attribute flip, the
 stylesheet is injected exactly once per page, and the off state cannot leave a
 half-applied material behind.
 
-Five smaller decisions worth knowing about:
+Six smaller decisions worth knowing about:
 
+- The wallpaper is sampled **on the host half**, and deliberately not on the
+  render path. `webserver/index-inject` is synchronous and cannot wait for an
+  image decode, so the first index render gets the fallback field, the sample
+  lands a moment later, and the next page load gets the wallpaper. Re-sampling is
+  driven by the file's `mtime` and size rather than a timer, so an unchanged
+  wallpaper costs one `stat` per render and nothing else. The sampling parameters
+  were measured rather than guessed — 192×108, lanczos3, blur 6, WebP q80 comes
+  out at 1028 bytes with no JPEG blocking visible at 6.5× — and the downscale
+  comes first on purpose: the source is a 1920×1200 JPEG, and shrinking it is
+  what averages the 8×8 compression blocks away.
 - The panel fill is derived, not hard-coded:
   `color-mix(in srgb, var(--dsw-alias-bg-base) <opacity>%, transparent)`. It
   therefore follows the active theme — light, dark, or any third-party theme —
@@ -127,20 +151,28 @@ Both of these shipped as bugs in 0.1.0 and are now pinned by assertions in
   `data-windows-titlebar` in the Windows desktop shell; a browser tab has no
   title row to paint, so only the sidebar changes there. This is the host's
   layout, not a gap in the plugin.
-- **The three cosmetic knobs need a page reload.** They are read when the index
+- **The knobs outside the UI need a page reload.** They are read when the index
   is served, so editing the YAML changes the next page load, not the current one.
 - **The material assumes the host keeps its `--dsw-*` tokens.** It layers on top
   of the theme rather than replacing it; a host that renames those tokens would
   leave the panels unpainted rather than broken.
-- **The colour field is an invention, not a wallpaper sample.** A browser cannot
-  read the desktop wallpaper, so the tint is a fixed low-chroma field rather than
-  a real sample of what is behind the window. In other words this plugin is a
-  *simulation* of Mica, not Mica: the real thing is composited by DWM from the
-  wallpaper and can only be switched on from the Electron main process with
-  `new BrowserWindow({ backgroundMaterial: "mica" })`, out of reach of a
-  renderer-side plugin. The host knows the way — its welcome window asks for
+- **This is a simulation of Mica, not Mica.** The colour is now genuinely taken
+  from your wallpaper, but the compositing still happens in the renderer. The real
+  thing is composited by DWM and can only be switched on from the Electron main
+  process with `new BrowserWindow({ backgroundMaterial: "mica" })`, out of reach
+  of a renderer-side plugin. The host knows the way — its welcome window asks for
   `backgroundMaterial: "acrylic"` on win32, while the main window only sets an
-  opaque `titleBarOverlay` colour.
+  opaque `titleBarOverlay` colour. Part of why this does not look more like Mica
+  is therefore an application-level choice, not the plugin's.
+- **Windows is the only wallpaper source.** It reads the flattened copy Windows
+  keeps at `%APPDATA%\Microsoft\Windows\Themes\TranscodedWallpaper`. macOS records
+  the wallpaper in a binary plist and this plugin does not parse it; anywhere else,
+  point `wallpaperPath` at an image and it works the same.
+- **It needs a `sharp` that is already in the profile.** The plugin does not
+  declare it as a dependency — pulling a native module into a profile to make a
+  one-kilobyte thumbnail would be rude — only as an optional peer, resolved at
+  runtime. The harness ships one, so this is rarely a concern; without it the
+  material falls back silently.
 
 ## Development
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ui-mica",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Mica material background for the DeepSeek Harness sidebar and title bar, with an on/off switch in Settings -> General.",
   "keywords": [
     "dsh",
@@ -52,7 +52,8 @@
   "peerDependencies": {
     "@deepseek-ai/dsh-client-locale": "^0.2.0-rc.2",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.2.0-rc.2",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.2.0-rc.2"
+    "@deepseek-ai/dsh-client-ui-settings": "^0.2.0-rc.2",
+    "sharp": ">=0.32"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-locale": {
@@ -62,6 +63,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-client-ui-settings": {
+      "optional": true
+    },
+    "sharp": {
       "optional": true
     }
   },

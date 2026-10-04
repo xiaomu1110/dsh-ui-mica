@@ -16,6 +16,8 @@
 #       config:
 #         enabled: true
 #         opacity: 62
+#         wallpaper: true
+#         wallpaperPath: ""
 #         tint: 100
 #         noise: 0.06
 - insert:
